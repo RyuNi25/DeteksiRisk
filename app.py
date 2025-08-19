@@ -1,134 +1,91 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib
 import matplotlib.pyplot as plt
-import json
-from io import StringIO, BytesIO   # <- pakai dua-duanya
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, confusion_matrix
+import seaborn as sns
 
-# =========================
-# Konfigurasi Halaman
-# =========================
-st.set_page_config(page_title="Prediksi Risiko Kredit Mekaar PNM", layout="wide")
+st.set_page_config(page_title="Deteksi Risiko Kredit PNM", layout="wide")
+
 st.title("🔍 Deteksi Dini Risiko Kredit Mekaar PNM")
-st.write("Aplikasi interaktif untuk **analisis data pinjaman** dan **prediksi risiko kredit** nasabah berdasarkan data historis.")
+st.markdown("Upload dataset pinjaman, sistem akan otomatis analisis & training model prediksi risiko kredit.")
 
-# =========================
+# =======================
 # Upload Dataset
-# =========================
-st.sidebar.header("📂 Upload Dataset")
-uploaded_csv = st.sidebar.file_uploader("Upload file CSV", type=["csv"])
+# =======================
+uploaded_csv = st.file_uploader("📂 Upload file CSV data nasabah", type=["csv"])
 
-df = None
 if uploaded_csv is not None:
-    try:
-        df = pd.read_csv(uploaded_csv, sep=None, engine="python")
-        st.subheader("📊 Data Nasabah")
-        st.dataframe(df.head())
-    except Exception as e:
-        st.error(f"Gagal membaca file CSV: {e}")
-        st.stop()
+    df = pd.read_csv(uploaded_csv)
 
-    # Ringkasan Data
-    st.subheader("📋 Ringkasan Data")
-    st.write(df.describe(include="all"))
+    st.subheader("📊 Ringkasan Data")
+    st.write(df.head())
+    st.write(df.describe())
 
-    # Korelasi Antar Variabel
-    st.subheader("📌 Korelasi Antar Variabel")
-    try:
-        corr = df.corr(numeric_only=True)
-        st.write(corr)
+    # =======================
+    # Preprocessing
+    # =======================
+    # Misalnya: target = "Label" (0 = risiko rendah, 1 = risiko tinggi)
+    target_col = "Label"  # ganti sesuai datasetmu
+    if target_col in df.columns:
+        X = df.drop(columns=[target_col])
+        y = df[target_col]
+
+        # Scaling
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        # Split
+        X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
+        # =======================
+        # Training Model
+        # =======================
+        model = RandomForestClassifier(random_state=42)
+        model.fit(X_train, y_train)
+
+        # Evaluasi
+        y_pred = model.predict(X_test)
+        st.subheader("📈 Evaluasi Model")
+        st.text(classification_report(y_test, y_pred))
+
+        cm = confusion_matrix(y_test, y_pred)
         fig, ax = plt.subplots()
-        cax = ax.matshow(corr, cmap="coolwarm")
-        plt.colorbar(cax)
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=["Rendah","Tinggi"], yticklabels=["Rendah","Tinggi"])
         st.pyplot(fig)
-    except Exception as e:
-        st.warning("Tidak bisa menghitung korelasi: " + str(e))
 
-# =========================
-# Upload Model
-# =========================
-st.sidebar.header("🤖 Upload Model")
-uploaded_model = st.sidebar.file_uploader("Upload file model (.joblib)", type=["joblib"])
-uploaded_scaler = st.sidebar.file_uploader("Upload file scaler (.joblib)", type=["joblib"])
-uploaded_features = st.sidebar.file_uploader("Upload feature names (.json)", type=["json"])
+        # =======================
+        # Form Prediksi
+        # =======================
+        st.subheader("📝 Prediksi Risiko Kredit Baru")
+        input_data = {}
+        for col in X.columns:
+            val = st.number_input(f"{col}", value=float(df[col].mean()))
+            input_data[col] = val
 
-model, scaler, feature_names = None, None, None
-
-if uploaded_model is not None:
-    model = joblib.load(uploaded_model)
-
-if uploaded_scaler is not None:
-    scaler = joblib.load(uploaded_scaler)
-
-if uploaded_features is not None:
-    feature_names = json.load(uploaded_features)
-
-# Default feature names jika JSON tidak ada
-if feature_names is None:
-    st.warning("⚠️ Feature names JSON tidak ditemukan. Input field mungkin tidak sesuai.")
-    feature_names = ["ODInterest", "ODPrincipal", "PrincipalDue", "InterestDue", "NoOfArrearDays"]
-
-# =========================
-# Prediksi Risiko Kredit
-# =========================
-st.subheader("🤝 Prediksi Risiko Kredit")
-
-if model is None or scaler is None:
-    st.error("⚠️ Model & Scaler belum tersedia. Silakan upload file model dan scaler terlebih dahulu.")
-else:
-    st.subheader("📝 Masukkan Data Nasabah")
-    input_data = {}
-    for feat in feature_names:
-        if "Day" in feat or "Term" in feat:   # kemungkinan integer
-            val = st.number_input(feat, min_value=0, value=0)
-        else:  # kemungkinan float
-            val = st.number_input(feat, min_value=0.0, value=0.0)
-        input_data[feat] = val
-
-    if st.button("🔮 Prediksi Risiko"):
-        try:
+        if st.button("Prediksi"):
             input_df = pd.DataFrame([input_data])
-            scaled_input = scaler.transform(input_df)
-            prediction = model.predict(scaled_input)[0]
-            proba = model.predict_proba(scaled_input)[0][1]
+            input_scaled = scaler.transform(input_df)
+            pred = model.predict(input_scaled)[0]
+            proba = model.predict_proba(input_scaled)[0][1]
 
-            if prediction == 1:
-                st.error(f"⚠️ Risiko Tinggi – Probabilitas: {proba:.2%}")
+            if pred == 1:
+                st.error(f"⚠ Risiko Tinggi — Probabilitas: {proba:.2%}")
             else:
-                st.success(f"✅ Risiko Rendah – Probabilitas: {proba:.2%}")
+                st.success(f"✅ Risiko Rendah — Probabilitas: {proba:.2%}")
 
-            # =========================
-            # Export Hasil Prediksi
-            # =========================
-            df_input = input_df.copy()
-            df_input["Prediksi"] = ["Risiko Tinggi" if prediction == 1 else "Risiko Rendah"]
-            df_input["Probabilitas Risiko Tinggi"] = proba
+        # =======================
+        # Feature Importance
+        # =======================
+        st.subheader("📌 Faktor Terpenting dalam Prediksi")
+        feature_importance = pd.DataFrame({
+            "Fitur": X.columns,
+            "Importance": model.feature_importances_
+        }).sort_values(by="Importance", ascending=False)
 
-            st.subheader("💾 Simpan Hasil Prediksi")
-            csv = df_input.to_csv(index=False).encode("utf-8")
-            st.download_button("⬇️ Download CSV", data=csv, file_name="hasil_prediksi.csv", mime="text/csv")
-
-            excel_buffer = BytesIO()
-            with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
-                df_input.to_excel(writer, index=False, sheet_name="HasilPrediksi")
-            st.download_button(
-                "⬇️ Download Excel",
-                data=excel_buffer.getvalue(),
-                file_name="hasil_prediksi.xlsx",
-                mime="application/vnd.ms-excel"
-            )
-
-            # =========================
-            # Feature Importance
-            # =========================
-            if hasattr(model, "feature_importances_"):
-                st.subheader("📊 Faktor Terpenting dalam Prediksi")
-                feature_importance = pd.DataFrame({
-                    "Fitur": feature_names,
-                    "Importance": model.feature_importances_
-                }).sort_values(by="Importance", ascending=False)
-
-                st.bar_chart(feature_importance.set_index("Fitur"))
-        except Exception as e:
-            st.error(f"Terjadi error saat prediksi: {e}")
+        st.bar_chart(feature_importance.set_index("Fitur"))
+    else:
+        st.warning("⚠ Kolom target 'Label' tidak ditemukan di dataset. Pastikan dataset punya kolom target untuk training.")
